@@ -131,6 +131,14 @@ should catch.
     python3 goat.py lint                                                     check the corpus is internally consistent
     python3 goat.py index                                                    regenerate pasture/INDEX_BY_*.md
     python3 goat.py new --category <category> --tier <tier> --name "<name>"  scaffold a new entry
+    python3 goat.py score --scanner <name> --report <file>                  score a scanner's output against the ground truth
+
+`score` reads a scanner's report, compares its verdicts to every
+`expected.yaml`, and prints recall, precision, per-tier and per-category
+breakdowns, plus the exact list of what it missed and what it
+false-flagged. Adapters for NVIDIA SkillSpector and Cisco skill-scanner
+ship in `lib/adapters.py`; any other scanner works once its output is in
+the small generic format in [`docs/SCORING.md`](docs/SCORING.md).
 
 `lint` is the one to run before committing anything — it catches
 duplicate IDs, unknown categories, and missing fields, so a sloppy
@@ -157,9 +165,13 @@ contribution can't quietly skew a scanner's score down the line.
         report.json                  raw scanner output for that run
         report.md                    the write-up, incl. how it compares to static-only
         raw-report.md                the scanner's own auto-generated markdown, unedited
+    docs/SCORING.md              how `goat.py score` works, and how to add a scanner adapter
     lib/corpus.py                loads every entry, derives its tier from its id
     lib/schema.py                validates expected.yaml against taxonomy.yaml
-    goat.py                      the CLI (quiz / lint / index / new)
+    lib/scoring.py               scores normalised scanner verdicts against the ground truth
+    lib/adapters.py              turns a scanner's native report into those normalised verdicts
+    tests/                       unittest suite (python3 -m unittest discover -s tests)
+    goat.py                      the CLI (quiz / lint / index / new / score)
 
 ## Contributing
 
@@ -180,10 +192,11 @@ that's exactly the kind of entry this corpus wants.
 
 Beyond new entries, here's what's still open:
 
-- **A real scoring script.** Evaluations under `evaluations/` are
-  currently scored by hand. Turning that into an actual
-  `scan(skill_dir) -> {verdict, categories}` adapter, so any scanner
-  gets scored automatically, is the biggest thing left to build.
+- **Scoring, end to end.** `goat.py score` now scores a scanner's report
+  against the ground truth (see [`docs/SCORING.md`](docs/SCORING.md)), with
+  adapters for the two scanners under `evaluations/`. Still open: adapters
+  for more scanners, and wiring a scanner's live `scan(skill_dir)` call in
+  directly so a run and its score are one command.
 - **Evaluate a scanner.** Pick one, run it against `pasture/`, and write
   up what you find under `evaluations/`. Any scanner is fair game,
   including ones we haven't looked at yet.
@@ -192,7 +205,7 @@ Beyond new entries, here's what's still open:
   would make this more useful as a shared benchmark.
 
 Open an issue or send a PR — a new corpus entry, a scanner write-up, or
-a piece of the scoring script are all welcome.
+a new scanner adapter for `goat.py score` are all welcome.
 
 ## Responsible disclosure
 
@@ -206,3 +219,4 @@ concludes.
 
 - Prashant Venkatesh
 - Nandan Gupta
+- Kannan Prabu Ramamoorthy

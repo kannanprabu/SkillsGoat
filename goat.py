@@ -1,8 +1,12 @@
 import argparse
+import json
 import os
 import sys
 
+from lib.adapters import ADAPTERS, load_results
 from lib.corpus import PASTURE_DIR, load_entries, tier_of
+from lib.scoring import score as score_corpus
+from lib.scoring import score_strict
 from lib.schema import load_taxonomy, validate_expected
 
 
@@ -166,6 +170,84 @@ def cmd_new(args):
     print(f"Created {folder}/")
 
 
+def _pct(value):
+    return "  -  " if value is None else f"{value * 100:5.1f}%"
+
+
+def _print_scorecard(card):
+    total = card.scored
+    print(c("=" * 60, "36"))
+    print(c(f"Scorecard — {card.scanner or 'scanner'}", "1"))
+    print(c("=" * 60, "36"))
+    print(f"Scored          {total} entries "
+          f"({card.tp + card.fn} malicious, {card.tn + card.fp} benign)")
+    if card.missing:
+        print(c(f"Not in report   {len(card.missing)} "
+                f"({', '.join(sorted(card.missing))})", "33"))
+    if card.unknown:
+        print(c(f"Unknown ids     {len(card.unknown)} "
+                f"({', '.join(sorted(card.unknown))})", "33"))
+    print()
+    print(f"  TP {card.tp:>2}   FN {card.fn:>2}      "
+          f"recall     {_pct(card.recall)}   (malicious caught)")
+    print(f"  FP {card.fp:>2}   TN {card.tn:>2}      "
+          f"precision  {_pct(card.precision)}   (flags that were right)")
+    print(f"                     f1         {_pct(card.f1)}")
+    print(f"                     accuracy   {_pct(card.accuracy)}")
+
+    if card.by_tier:
+        print()
+        print(c("Recall by tier", "1"))
+        for tier, (detected, n) in sorted(card.by_tier.items()):
+            bar = "#" * detected + "-" * (n - detected)
+            print(f"  {tier:>3}  {detected}/{n}  {bar}")
+
+    if card.by_category:
+        print()
+        print(c("Recall by category", "1"))
+        for cat, (detected, n) in sorted(card.by_category.items()):
+            mark = c("ok  ", "32") if detected == n else c("miss", "31")
+            print(f"  {mark}  {detected}/{n}  {cat}")
+
+    if card.cat_labeled:
+        print()
+        print(f"Category labels  {card.cat_hits}/{card.cat_labeled} true positives "
+              f"had a category overlapping the expected set")
+
+    if card.misses:
+        print()
+        print(c("Missed (malicious called benign)", "31;1"))
+        for m in card.misses:
+            print(f"  tier {m['tier']:>3}  {m['id']}  ({m['category']})")
+
+    if card.false_positives:
+        print()
+        print(c("False positives (benign flagged malicious)", "31;1"))
+        for fp in card.false_positives:
+            print(f"  tier {fp['tier']:>3}  {fp['id']}  ({fp['category']})")
+    print(c("=" * 60, "36"))
+
+
+def cmd_score(args):
+    if args.scanner:
+        results = load_results(args.scanner, args.report)
+        scanner_name = args.scanner
+    else:
+        results = ADAPTERS["generic"](args.report)
+        scanner_name = os.path.basename(args.report)
+
+    scorer = score_strict if args.strict else score_corpus
+    card = scorer(results, scanner=scanner_name)
+
+    if args.json:
+        print(json.dumps(card.as_dict(), indent=2))
+    else:
+        _print_scorecard(card)
+
+    if args.fail_under is not None and (card.recall or 0) < args.fail_under:
+        raise SystemExit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="goat")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -179,6 +261,26 @@ def main():
     new_parser.add_argument("--tier", required=True, help="e.g. 100, 200, 300")
     new_parser.add_argument("--name", required=True, help="e.g. 'payload in config'")
     new_parser.set_defaults(func=cmd_new)
+
+    score_parser = subparsers.add_parser(
+        "score", help="score a scanner's report against the corpus ground truth")
+    score_parser.add_argument(
+        "--report", required=True,
+        help="the scanner's output file (or a dir containing report.json)")
+    score_parser.add_argument(
+        "--scanner", choices=sorted(ADAPTERS),
+        help="which adapter to parse --report with; omit for the generic "
+             "{id, verdict, categories} format (see docs/SCORING.md)")
+    score_parser.add_argument(
+        "--strict", action="store_true",
+        help="count a corpus entry missing from the report as 'benign' "
+             "instead of leaving it unscored")
+    score_parser.add_argument(
+        "--json", action="store_true", help="emit the scorecard as JSON")
+    score_parser.add_argument(
+        "--fail-under", type=float, metavar="R",
+        help="exit non-zero if recall is below R (0-1), for CI")
+    score_parser.set_defaults(func=cmd_score)
 
     args = parser.parse_args()
     args.func(args)
